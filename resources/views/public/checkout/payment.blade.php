@@ -55,6 +55,13 @@
                                 </div>
                             @endif
 
+<div class="col-md-4">
+                            <form action="{{ route('chimoney.payment') }}" method="POST">
+    @csrf
+    <!-- Add any additional form fields here as needed -->
+    <button type="submit" class="btn btn-primary">Pay with Chimoney</button>
+</form></div>
+
 
                             @if(get_option('enable_bank_transfer') == 1)
                                 <div class="col-md-4">
@@ -187,60 +194,5 @@
 @endsection
 
 @section('page-js')
-
-    <script>
-        $(function() {
-            $('.stripe-button').on('token', function(e, token){
-                $('#stripeForm').replaceWith('');
-
-                $.ajax({
-                    url : '{{route('payment_stripe_receive')}}',
-                    type: "POST",
-                    data: { stripeToken : token.id, _token : '{{ csrf_token() }}' },
-                    success : function (data) {
-                        if (data.success == 1){
-                            $('.checkout-wrap').html(data.response);
-                            toastr.success(data.msg, '@lang('app.success')', toastr_options);
-                        }
-                    }
-                });
-            });
-
-            @if(get_option('enable_bank_transfer') == 1)
-
-            $('#bankTransferBtn').click(function(){
-                $('.bankPaymetWrap').slideToggle();
-            });
-
-            $('#bankTransferForm').submit(function(e){
-                e.preventDefault();
-
-                var form_input = $(this).serialize()+'&_token={{csrf_token()}}';
-
-                $.ajax({
-                    url : '{{route('bank_transfer_submit')}}',
-                    type: "POST",
-                    data: form_input,
-                    success : function (data) {
-                        if (data.success == 1){
-                            $('.checkout-wrap').html(data.response);
-                            toastr.success(data.msg, '@lang('app.success')', toastr_options);
-                        }
-                    },
-                    error   : function ( jqXhr, json, errorThrown ) {
-                        var errors = jqXhr.responseJSON;
-                        var errorsHtml= '';
-                        $.each( errors, function( key, value ) {
-                            errorsHtml += '<li>' + value[0] + '</li>';
-                        });
-                        toastr.error( errorsHtml , "Error " + jqXhr.status +': '+ errorThrown);
-                    }
-                });
-
-            });
-            @endif
-
-        });
-    </script>
 
 @endsection

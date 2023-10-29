@@ -12,28 +12,31 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Intervention\Image\Facades\Image;
+use Unicodeveloper\Paystack\Facades\Paystack;
+
+
 
 class CheckoutController extends Controller
 {
-
     /**
      * @param Request $request
      * @param int $reward_id
      * @return mixed
      */
-    public function addToCart(Request $request, $reward_id = 0){
-        if ($reward_id){
+    public function addToCart(Request $request, $reward_id = 0)
+    {
+        if ($reward_id) {
             //If checkout request come from reward
-            session( ['cart' =>  ['cart_type' => 'reward', 'reward_id' => $reward_id] ] );
+            session(['cart' =>  ['cart_type' => 'reward', 'reward_id' => $reward_id] ]);
 
             $reward = Reward::find($reward_id);
-            if($reward->campaign->is_ended()){
+            if($reward->campaign->is_ended()) {
                 $request->session()->forget('cart');
                 return redirect()->back()->with('error', trans('app.invalid_request'));
             }
-        }else{
+        } else {
             //Or if comes from donate button
-            session( ['cart' =>  ['cart_type' => 'donation', 'campaign_id' => $request->campaign_id, 'amount' => $request->amount ] ] );
+            session(['cart' =>  ['cart_type' => 'donation', 'campaign_id' => $request->campaign_id, 'amount' => $request->amount ] ]);
         }
 
 
@@ -45,30 +48,32 @@ class CheckoutController extends Controller
      *
      * Checkout page
      */
-    public function checkout(){
+    public function checkout()
+    {
         $title = trans('app.checkout');
 
-        if ( ! session('cart')){
+        if (! session('cart')) {
             return view('public.checkout.empty', compact('title'));
         }
 
         $reward = null;
-        if(session('cart.cart_type') == 'reward'){
+        if(session('cart.cart_type') == 'reward') {
             $reward = Reward::find(session('cart.reward_id'));
             $campaign = Campaign::find($reward->campaign_id);
-        }elseif (session('cart.cart_type') == 'donation'){
+        } elseif (session('cart.cart_type') == 'donation') {
             $campaign = Campaign::find(session('cart.campaign_id'));
         }
-        if (session('cart')){
+        if (session('cart')) {
             return view('public.checkout.index', compact('title', 'campaign', 'reward'));
         }
         return view('public.checkout.empty', compact('title'));
     }
 
-    public function checkoutPost(Request $request){
+    public function checkoutPost(Request $request)
+    {
         $title = trans('app.checkout');
 
-        if ( ! session('cart')){
+        if (! session('cart')) {
             return view('public.checkout.empty', compact('title'));
         }
 
@@ -76,247 +81,181 @@ class CheckoutController extends Controller
         $input = array_except($request->input(), '_token');
         session(['cart' => array_merge($cart, $input)]);
 
-        if(session('cart.cart_type') == 'reward'){
+        if(session('cart.cart_type') == 'reward') {
             $reward = Reward::find(session('cart.reward_id'));
             $campaign = Campaign::find($reward->campaign_id);
-        }elseif (session('cart.cart_type') == 'donation'){
+        } elseif (session('cart.cart_type') == 'donation') {
             $campaign = Campaign::find(session('cart.campaign_id'));
         }
-        
+
         //dd(session('cart'));
         return view('public.checkout.payment', compact('title', 'campaign'));
     }
 
+
     /**
-     * @param Request $request
      * @return mixed
      *
-     * Payment gateway PayPal
+     * receive card payment from paystack
      */
-    public function paypalRedirect(Request $request){
-        $title = trans('app.checkout');
-        if ( ! session('cart')){
-            return view('public.checkout.empty', compact('title'));
-        }
-        //Find the campaign
-        $cart = session('cart');
-
-        $amount = 0;
-        if(session('cart.cart_type') == 'reward'){
-            $reward = Reward::find(session('cart.reward_id'));
-            $amount = $reward->amount;
-            $campaign = Campaign::find($reward->campaign_id);
-        }elseif (session('cart.cart_type') == 'donation'){
-            $campaign = Campaign::find(session('cart.campaign_id'));
-            $amount = $cart['amount'];
-        }
-        $currency = get_option('currency_sign');
-        $user_id = null;
-        if (Auth::check()){
-            $user_id = Auth::user()->id;
-        }
-        //Create payment in database
+    public function payWithPaystack(Request $request)
+    {
+    // Retrieve the payment details from the session
+    $cart = session('cart');
+    $amount = $cart['amount'];
 
 
-        $transaction_id = 'tran_'.time().str_random(6);
-        // get unique recharge transaction id
-        while( ( Payment::whereLocalTransactionId($transaction_id)->count() ) > 0) {
-            $transaction_id = 'reid'.time().str_random(5);
-        }
-        $transaction_id = strtoupper($transaction_id);
+    if ('cart.cart_type' === 'reward') {
+        $reward = Reward::find($cart['reward_id']);
+        $amount = $reward->amount;
+        $campaign = Campaign::find($reward->campaign_id);
+    } elseif ('cart.cart_type' === 'donation') {
+        $campaign = Campaign::find($cart['campaign_id']);
+        $amount = $cart['amount'];
+    }
+    $currency = get_option('currency_sign');
+    $user_id = null;
+    if (Auth::check()) {
+        $user_id = Auth::user()->id;
+    }
+    $transaction_id = 'tran_' . time() . str_random(6);
+    // get unique recharge transaction id
+    while((Payment::whereLocalTransactionId($transaction_id)->count()) > 0) {
+        $transaction_id = 'reid' . time() . str_random(5);
+    }
+    $transaction_id = strtoupper($transaction_id);
 
-        $payments_data = [
-            'name' => session('cart.full_name'),
-            'email' => session('cart.email'),
+    $payments_data = [
+        'name' => session('cart.full_name'),
+        'email' => session('cart.email'),
 
-            'user_id'               => $user_id,
-            'campaign_id'           => $campaign->id,
-            'reward_id'             => session('cart.reward_id'),
+        'user_id'               => $user_id,
+        'campaign_id'           => session('cart.campaign_id'),
+        'reward_id'             => session('cart.reward_id'),
 
-            'amount'                => $amount,
-            'payment_method'        => 'paypal',
-            'status'                => 'initial',
-            'currency'              => $currency,
-            'local_transaction_id'  => $transaction_id,
+        'amount'                => $amount,
+        'payment_method'        => 'paystack',
+        'status'                => 'initial',
+        'currency'              => $currency,
+        'local_transaction_id'  => $transaction_id,
 
-            'contributor_name_display'  => session('cart.contributor_name_display'),
-        ];
-        //Create payment and clear it from session
-        $created_payment = Payment::create($payments_data);
-        $request->session()->forget('cart');
+        'contributor_name_display'  => session('cart.contributor_name_display'),
+    ];
 
-        // PayPal settings
-        $paypal_action_url = "https://www.paypal.com/cgi-bin/webscr";
-        if (get_option('enable_paypal_sandbox') == 1)
-            $paypal_action_url = "https://www.sandbox.paypal.com/cgi-bin/webscr";
+    //Create payment and clear it from session
+    $created_payment = Payment::create($payments_data);
+    $request->session()->forget('cart');
 
-        $paypal_email = get_option('paypal_receiver_email');
-        $return_url = route('payment_success',$transaction_id);
-        $cancel_url = route('checkout');
-        $notify_url = route('paypal_notify', $transaction_id);
+    // Define the payment data for Paystack
+    $data = [
+        'amount' => $amount * 100, // Paystack uses kobo (1 Naira = 100 kobo)
+        'email' => $payments_data['email'],
+        'currency' => 'NGN', // Nigerian Naira (change as needed)
+        'metadata' => [
+            'transaction_id' => $payments_data['local_transaction_id'],
+            'contributor_name_display' => $payments_data['contributor_name_display'],
+        ],
+    ];
 
-        $item_name = $campaign->title." [Contributing]";
 
-        // Check if paypal request or response
-        $querystring = '';
+    // Create a Paystack payment link
+    return Paystack::getAuthorizationUrl($data)->redirectNow();
 
-        // Firstly Append paypal account to querystring
-        $querystring .= "?business=".urlencode($paypal_email)."&";
+    // Redirect the user to the Paystack paymen
+}
+public function payWithChimoney(Request $request)
+{
+    $cart = session('cart');
+    $amount = $cart['amount'];
+    $valueInUSD = $amount;  // Set valueInUSD to the cart's amount
 
-        // Append amount& currency (£) to quersytring so it cannot be edited in html
-        //The item name and amount can be brought in dynamically by querying the $_POST['item_number'] variable.
-        $querystring .= "item_name=".urlencode($item_name)."&";
-        $querystring .= "amount=".urlencode($amount)."&";
-        $querystring .= "currency_code=".urlencode($currency)."&";
-
-        $querystring .= "first_name=".urlencode(session('cart.full_name'))."&";
-        //$querystring .= "last_name=".urlencode($ad->user->last_name)."&";
-        $querystring .= "payer_email=".urlencode(session('cart.email') )."&";
-        $querystring .= "item_number=".urlencode($created_payment->local_transaction_id)."&";
-
-        //loop for posted values and append to querystring
-        foreach(array_except($request->input(), '_token') as $key => $value){
-            $value = urlencode(stripslashes($value));
-            $querystring .= "$key=$value&";
-        }
-
-        // Append paypal return addresses
-        $querystring .= "return=".urlencode(stripslashes($return_url))."&";
-        $querystring .= "cancel_return=".urlencode(stripslashes($cancel_url))."&";
-        $querystring .= "notify_url=".urlencode($notify_url);
-
-        // Append querystring with custom field
-        //$querystring .= "&custom=".USERID;
-
-        // Redirect to paypal IPN
-        header('location:'.$paypal_action_url.$querystring);
-        exit();
+    if ($cart['cart_type'] === 'reward') {
+        $reward = Reward::find($cart['reward_id']);
+        $amount = $reward->amount;
+        $campaign = Campaign::find($reward->campaign_id);
+    } elseif ($cart['cart_type'] === 'donation') {
+        $campaign = Campaign::find($cart['campaign_id']);
+        $amount = $cart['amount'];
     }
 
-    /**
-     * @param Request $request
-     * @param $transaction_id
-     *
-     * Check paypal notify
-     */
-    public function paypalNotify(Request $request, $transaction_id){
-        //todo: need to  be check
-        $payment = Payment::whereLocalTransactionId($transaction_id)->where('status','!=','success')->first();
+    // Retrieve payer email from the cart data
+    $payerEmail = $cart['email'];
 
-        $verified = paypal_ipn_verify();
-        if ($verified){
-            //Payment success, we are ready approve your payment
-            $payment->status = 'success';
-            $payment->charge_id_or_token = $request->txn_id;
-            $payment->description = $request->item_name;
-            $payment->payer_email = $request->payer_email;
-            $payment->payment_created = strtotime($request->payment_date);
-            $payment->save();
-
-            //Update totals
-            $payment->campaign->updateTotalNow();
-        }else{
-            $payment->status = 'declined';
-            $payment->description = trans('app.payment_declined_msg');
-            $payment->save();
-        }
-        // Reply with an empty 200 response to indicate to paypal the IPN was received correctly
-        header("HTTP/1.1 200 OK");
+    $currency = get_option('currency_sign');
+    $user_id = null;
+    if (Auth::check()) {
+        $user_id = Auth::user()->id;
     }
 
-
-    /**
-     * @return array
-     * 
-     * receive card payment from stripe
-     */
-    public function paymentStripeReceive(Request $request){
-
-        $user_id = null;
-        if (Auth::check()){
-            $user_id = Auth::user()->id;
-        }
-
-        $stripeToken = $request->stripeToken;
-        \Stripe\Stripe::setApiKey(get_stripe_key('secret'));
-        // Create the charge on Stripe's servers - this will charge the user's card
-        try {
-            $cart = session('cart');
-
-            //Find the campaign
-            $amount = 0;
-            if(session('cart.cart_type') == 'reward'){
-                $reward = Reward::find(session('cart.reward_id'));
-                $amount = $reward->amount;
-                $campaign = Campaign::find($reward->campaign_id);
-            }elseif (session('cart.cart_type') == 'donation'){
-                $campaign = Campaign::find(session('cart.campaign_id'));
-                $amount = $cart['amount'];
-            }
-            $currency = get_option('currency_sign');
-
-            //Charge from card
-            $charge = \Stripe\Charge::create(array(
-                "amount"        => get_stripe_amount($amount), // amount in cents, again
-                "currency"      => $currency,
-                "source"        => $stripeToken,
-                "description"   => $campaign->title." [Contributing]"
-            ));
-
-            if ($charge->status == 'succeeded'){
-                //Save payment into database
-                $data = [
-                    'name' => session('cart.full_name'),
-                    'email' => session('cart.email'),
-                    'amount' => get_stripe_amount($charge->amount, 'to_dollar'),
-
-                    'user_id'               => $user_id,
-                    'campaign_id'           => $campaign->id,
-                    'reward_id'             => session('cart.reward_id'),
-                    'payment_method'        => 'stripe',
-                    'currency'              => $currency,
-                    'charge_id_or_token'    => $charge->id,
-                    'description'           => $charge->description,
-                    'payment_created'       => $charge->created,
-
-                    //Card Info
-                    'card_last4'        => $charge->source->last4,
-                    'card_id'           => $charge->source->id,
-                    'card_brand'        => $charge->source->brand,
-                    'card_country'      => $charge->source->US,
-                    'card_exp_month'    => $charge->source->exp_month,
-                    'card_exp_year'     => $charge->source->exp_year,
-
-                    'contributor_name_display'  => session('cart.contributor_name_display'),
-                    'status'                    => 'success',
-                ];
-
-                Payment::create($data);
-                $campaign->updateTotalNow();
-
-                $request->session()->forget('cart');
-                return ['success'=>1, 'msg'=> trans('app.payment_received_msg'), 'response' => $this->payment_success_html()];
-            }
-        } catch(\Stripe\Error\Card $e) {
-            // The card has been declined
-            return ['success'=>0, 'msg'=> trans('app.payment_declined_msg'), 'response' => $e];
-        }
+    $transaction_id = 'tran_' . time() . str_random(6);
+    while ((Payment::whereLocalTransactionId($transaction_id)->count()) > 0) {
+        $transaction_id = 'reid' . time() . str_random(5);
     }
+    $transaction_id = strtoupper($transaction_id);
+
+    $payments_data = [
+        'name' => session('cart.full_name'),
+        'email' => $payerEmail,  // Use the retrieved payer email
+        'user_id' => $user_id,
+        'campaign_id' => session('cart.campaign_id'),
+        'reward_id' => session('cart.reward_id'),
+        'amount' => $amount,
+        'payment_method' => 'chimoney',
+        'status' => 'initial',
+        'currency' => $currency,
+        'local_transaction_id' => $transaction_id,
+        'contributor_name_display' => session('cart.contributor_name_display'),
+    ];
+
+    $created_payment = Payment::create($payments_data);
+    $request->session()->forget('cart');
+
+    // Construct the JSON payload for the API request
+    $apiPayload = json_encode([
+        'valueInUSD' => $valueInUSD,
+        'payerEmail' => $payerEmail,
+        'redirect_url' => route('payment_success', ['transaction_id' => $transaction_id]),  // Use the route
+    ]);
+
+    // Make the POST request to the Chimoney API
+    $client = new \GuzzleHttp\Client();
+    $response = $client->request('POST', 'https://api-v2-sandbox.chimoney.io/v0.2/payment/initiate', [
+        'body' => $apiPayload,  // Send the JSON payload
+        'headers' => [
+            'X-API-KEY' => env('CHIMONEY_API_KEY'),
+            'Content-Type' => 'application/json',
+        ],
+    ]);
+
+    $apiResponse = json_decode((string) $response->getBody(), true);
+
+    if (isset($apiResponse['data']['paymentLink'])) {
+        // Redirect to the paymentLink
+        return redirect($apiResponse['data']['paymentLink']);
+    } else {
+        // Handle the case where paymentLink is not present in the response
+        return response()->json(['error' => 'Payment link not found in the API response']);
+    }
+}
+
+
     
-    public function payment_success_html(){
+    public function payment_success_html()
+    {
         $html = ' <div class="payment-received">
-                            <h1> <i class="fa fa-check-circle-o"></i> '.trans('app.payment_thank_you').'</h1>
-                            <p>'.trans('app.payment_receive_successfully').'</p>
-                            <a href="'.route('home').'" class="btn btn-filled">'.trans('app.home').'</a>
+                            <h1> <i class="fa fa-check-circle-o"></i> ' . trans('app.payment_thank_you') . '</h1>
+                            <p>' . trans('app.payment_receive_successfully') . '</p>
+                            <a href="' . route('home') . '" class="btn btn-filled">' . trans('app.home') . '</a>
                         </div>';
         return $html;
     }
-    
-    public function paymentSuccess(Request $request, $transaction_id = null){
-        if ($transaction_id){
+
+    public function paymentSuccess(Request $request, $transaction_id = null)
+    {
+        if ($transaction_id) {
             $payment = Payment::whereLocalTransactionId($transaction_id)->whereStatus('initial')->first();
-            if ($payment){
-                $payment->status = 'pending';
+            if ($payment) {
+                $payment->status = 'success';
                 $payment->save();
             }
         }
@@ -325,7 +264,8 @@ class CheckoutController extends Controller
         return view('public.checkout.success', compact('title'));
     }
 
-    public function paymentBankTransferReceive(Request $request){
+    public function paymentBankTransferReceive(Request $request)
+    {
         $rules = [
             'bank_swift_code'   => 'required',
             'account_number'    => 'required',
@@ -336,7 +276,7 @@ class CheckoutController extends Controller
         $this->validate($request, $rules);
 
         //get Cart Item
-        if ( ! session('cart')){
+        if (! session('cart')) {
             $title = trans('app.checkout');
             return view('public.checkout.empty', compact('title'));
         }
@@ -344,26 +284,26 @@ class CheckoutController extends Controller
         $cart = session('cart');
 
         $amount = 0;
-        if(session('cart.cart_type') == 'reward'){
+        if(session('cart.cart_type') == 'reward') {
             $reward = Reward::find(session('cart.reward_id'));
             $amount = $reward->amount;
             $campaign = Campaign::find($reward->campaign_id);
-        }elseif (session('cart.cart_type') == 'donation'){
+        } elseif (session('cart.cart_type') == 'donation') {
             $campaign = Campaign::find(session('cart.campaign_id'));
             $amount = $cart['amount'];
         }
         $currency = get_option('currency_sign');
         $user_id = null;
-        if (Auth::check()){
+        if (Auth::check()) {
             $user_id = Auth::user()->id;
         }
         //Create payment in database
 
 
-        $transaction_id = 'tran_'.time().str_random(6);
+        $transaction_id = 'tran_' . time() . str_random(6);
         // get unique recharge transaction id
-        while( ( Payment::whereLocalTransactionId($transaction_id)->count() ) > 0) {
-            $transaction_id = 'reid'.time().str_random(5);
+        while((Payment::whereLocalTransactionId($transaction_id)->count()) > 0) {
+            $transaction_id = 'reid' . time() . str_random(5);
         }
         $transaction_id = strtoupper($transaction_id);
 
@@ -394,7 +334,7 @@ class CheckoutController extends Controller
         $created_payment = Payment::create($payments_data);
         $request->session()->forget('cart');
 
-        return ['success'=>1, 'msg'=> trans('app.payment_received_msg'), 'response' => $this->payment_success_html()];
+        return ['success' => 1, 'msg' => trans('app.payment_received_msg'), 'response' => $this->payment_success_html()];
 
     }
 
