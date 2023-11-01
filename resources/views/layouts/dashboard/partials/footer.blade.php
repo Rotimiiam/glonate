@@ -18,7 +18,7 @@
             <div class="row">
                 <div class="col-md-12">
                     <p class="footer-copyright"> {!! get_text_tpl(get_option('copyright_text')) !!} </p>
-                    <p class="d-none d-sm-inline text-white text pull-right">Glonate <code>v.{{config('app.version')}}</code>, by <a href="https://github.com/Rotimiiam" target="_blank">Rotimi Olorode</a> </p>
+                    <p class="d-none d-sm-inline text-white text pull-right">Glonate <code>v.{{config('app.version')}}</code>, by <a href="https://github.com/Rotimiiam" target="_blank">Rotimi Oolorode</a> </p>
                 </div>
             </div>
         </div>
